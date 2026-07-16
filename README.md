@@ -2,7 +2,7 @@
 
 > OpenWrt 固件构建 CI/CD 模板 — 自动检测上游 → 全量编译 → 烟雾测试 → 发布 Release
 
-[![build](https://github.com/<user>/<repo>/actions/workflows/main-build.yml/badge.svg)](https://github.com/<user>/<repo>/actions/workflows/main-build.yml)
+[![build](https://github.com/Hawaiine/openwrt-build-template/actions/workflows/main-build.yml/badge.svg)](https://github.com/Hawaiine/openwrt-build-template/actions/workflows/main-build.yml)
 [![License](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
 ---
@@ -108,7 +108,7 @@ openwrt-build-template/
 ### 1️⃣ 使用此模板
 
 ```bash
-git clone https://github.com/<user>/auto-pipeline-template.git my-project
+git clone https://github.com/Hawaiine/openwrt-build-template.git my-project
 cd my-project
 rm -rf .git
 git init
@@ -131,7 +131,7 @@ git commit -m "🎉 从模板初始化项目"
 ### 4️⃣ 推送触发构建
 
 ```bash
-git remote add origin https://github.com/<user>/my-project.git
+git remote add origin https://github.com/<your-org>/my-project.git
 git push -u origin main
 ```
 
