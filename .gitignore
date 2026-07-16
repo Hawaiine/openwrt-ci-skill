@@ -1,0 +1,12 @@
+# 忽略文件
+*.swp
+*.swo
+*~
+.DS_Store
+*.bak
+*.log
+__pycache__/
+build/
+dist/
+.env
+*.local

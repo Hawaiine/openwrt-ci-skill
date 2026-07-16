@@ -1,0 +1,14 @@
+#!/bin/sh
+# 首次启动补丁模板
+# 创建 .app-firstboot 标记，用于首次启动检测
+
+touch /etc/.app-firstboot
+
+# 在此添加默认配置
+# uci set ...
+
+uci commit 2>/dev/null || true
+
+# 自清理
+rm /etc/uci-defaults/99-custom
+exit 0
