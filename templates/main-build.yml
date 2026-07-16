@@ -1,0 +1,406 @@
+# =============================================================================
+# OpenWrt Auto Build — 全量 SDK 编译版（模板）
+# 检测上游更新 → 全量源码编译 → QEMU 烟雾测试 → 发布 Release
+# =============================================================================
+name: openwrt-auto-build
+
+on:
+  schedule:
+    - cron: '0 6 * * *'    # 每天 UTC 06:00 / 北京时间 14:00
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  actions: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  OWRT_REPO: openwrt/openwrt
+  NIKKI_REPO: nikkinikki-org/OpenWrt-nikki
+  LAST_VERSION_FILE: last_build_version
+  BUILD_DIR: openwrt
+  CCACHE_DIR: /tmp/.ccache
+  MAKE_JOBS: 4                        # 免费 runner 2 核 4 线程
+
+jobs:
+  # ─── Job 1: 检测上游 ──────────────────────────────────
+  check-upstream:
+    runs-on: ubuntu-latest
+    outputs:
+      should_build: ${{ steps.check.outputs.should_build }}
+      owrt_version: ${{ steps.check.outputs.owrt_version }}
+      owrt_ver_safe: ${{ steps.check.outputs.owrt_ver_safe }}
+      kernel_version: ${{ steps.check.outputs.kernel_version }}
+      nikki_version: ${{ steps.check.outputs.nikki_version }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: 🔍 检测上游版本
+        id: check
+        run: |
+          SAVED=$(cat ${{ env.LAST_VERSION_FILE }} 2>/dev/null || echo "none")
+
+          OWRT_TAG=$(curl -sL "https://api.github.com/repos/${{ env.OWRT_REPO }}/releases/latest" \
+            | jq -r '.tag_name // empty')
+
+          NIKKI_TAG=$(curl -sL "https://api.github.com/repos/${{ env.NIKKI_REPO }}/releases/latest" \
+            | jq -r '.tag_name // empty')
+
+          KERNEL_VER=$(curl -sL "https://www.kernel.org/releases.json" \
+            | jq -r '[.releases[] | select(.moniker == "stable" or .moniker == "longterm") | .version][0] // empty')
+
+          echo "owrt_version=$OWRT_TAG" >> "$GITHUB_OUTPUT"
+          echo "kernel_version=$KERNEL_VER" >> "$GITHUB_OUTPUT"
+          echo "nikki_version=$NIKKI_TAG" >> "$GITHUB_OUTPUT"
+
+          OWRT_SAFE="${OWRT_TAG#v}"
+          echo "owrt_ver_safe=$OWRT_SAFE" >> "$GITHUB_OUTPUT"
+
+          COMPOSITE="${OWRT_TAG}_${NIKKI_TAG}_${KERNEL_VER}"
+
+          if [ "$COMPOSITE" != "$SAVED" ] && [ -n "$OWRT_TAG" ]; then
+            echo "should_build=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "should_build=false" >> "$GITHUB_OUTPUT"
+          fi
+
+  # ─── Job 2: 全量 SDK 编译 ────────────────────────────
+  build:
+    needs: check-upstream
+    if: needs.check-upstream.outputs.should_build == 'true'
+    runs-on: ubuntu-latest
+    outputs:
+      kernel_version: ${{ steps.kernel-version.outputs.kernel_version }}
+      nikki_version_actual: ${{ steps.nikki-version.outputs.nikki_version_actual }}
+      root_password: ${{ steps.gen-pass.outputs.root_password }}
+      owrt_version: ${{ needs.check-upstream.outputs.owrt_version }}
+      owrt_ver_safe: ${{ needs.check-upstream.outputs.owrt_ver_safe }}
+      nikki_tag: ${{ needs.check-upstream.outputs.nikki_version }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: 💾 释放 runner 磁盘空间
+        run: |
+          sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/share/boost \
+            "$AGENT_TOOLSDIRECTORY" /usr/local/lib/android || true
+
+      - name: 📦 安装依赖
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq \
+            build-essential libncurses5-dev libncursesw5-dev \
+            zlib1g-dev gawk git gettext wget unzip python3 \
+            file qemu-utils ccache genisoimage
+
+      - name: 💾 恢复 ccache 缓存
+        uses: actions/cache@v5
+        with:
+          path: ${{ env.CCACHE_DIR }}
+          key: ccache-openwrt-${{ needs.check-upstream.outputs.owrt_ver_safe }}-${{ hashFiles('scripts/gen-config.sh') }}
+          restore-keys: |
+            ccache-openwrt-${{ needs.check-upstream.outputs.owrt_ver_safe }}-
+            ccache-openwrt-
+
+      - name: 💾 恢复源码树缓存
+        id: source-cache
+        uses: actions/cache@v5
+        with:
+          path: ${{ env.BUILD_DIR }}
+          key: source-openwrt-${{ needs.check-upstream.outputs.owrt_ver_safe }}
+          restore-keys: |
+            source-openwrt-${{ needs.check-upstream.outputs.owrt_ver_safe }}-
+
+      - name: 💾 恢复 dl 缓存
+        uses: actions/cache@v5
+        with:
+          path: |
+            ${{ env.BUILD_DIR }}/dl
+            ${{ env.BUILD_DIR }}/feeds
+          key: dl-openwrt-${{ needs.check-upstream.outputs.owrt_ver_safe }}-${{ hashFiles('scripts/gen-config.sh') }}
+          restore-keys: |
+            dl-openwrt-${{ needs.check-upstream.outputs.owrt_ver_safe }}-
+            dl-openwrt-
+
+      - name: ⬇️ 克隆 OpenWrt 源码（自动重试）
+        if: steps.source-cache.outputs.cache-hit != 'true'
+        run: |
+          TAG="${{ needs.check-upstream.outputs.owrt_version }}"
+          n=0
+          until [ $n -ge 3 ]; do
+            rm -rf "${{ env.BUILD_DIR }}"
+            git clone --depth 1 --branch "$TAG" \
+              https://github.com/${{ env.OWRT_REPO }}.git \
+              "${{ env.BUILD_DIR }}" && break
+            n=$((n+1))
+            sleep 30
+          done
+          [ $n -lt 3 ] || { echo "❌ 克隆失败"; exit 1; }
+
+      - name: 🔑 生成随机 root 密码
+        id: gen-pass
+        run: |
+          mkdir -p files/etc
+          PASSWORD=$(openssl rand -base64 12 | tr -d '=' | tr '/+' 'x9' | head -c 16)
+          HASH=$(openssl passwd -6 "$PASSWORD")
+          sed -i "s|^root:[^:]*:|root:${HASH}:|" files/etc/shadow 2>/dev/null || \
+            echo "root:${HASH}:0:0:root:/root:/bin/ash" > files/etc/shadow
+          echo "root_password=${PASSWORD}" >> "$GITHUB_OUTPUT"
+
+      - name: ⚙️ 复制自定义文件
+        run: |
+          mkdir -p "${{ env.BUILD_DIR }}/files"
+          cp -r files/* "${{ env.BUILD_DIR }}/files/"
+          OWRT_VER="${{ needs.check-upstream.outputs.owrt_version }}"
+          sed -i "s/@OWRT_VERSION@/${OWRT_VER}/g" "${{ env.BUILD_DIR }}/files/www/setup.html" 2>/dev/null || true
+
+      - name: ⚙️ 配置 feeds
+        run: |
+          bash scripts/gen-feeds-conf.sh \
+            "${{ needs.check-upstream.outputs.owrt_version }}" \
+            "${{ needs.check-upstream.outputs.nikki_version }}" \
+            > "${{ env.BUILD_DIR }}/feeds.conf.default"
+          cd "${{ env.BUILD_DIR }}"
+          rm -rf feeds 2>/dev/null || true
+          n=0
+          until [ $n -ge 3 ]; do
+            ./scripts/feeds update -a && break
+            n=$((n+1))
+            sleep 30
+          done
+          [ $n -lt 3 ] || { echo "❌ feeds update 失败"; exit 1; }
+          ./scripts/feeds install -a
+
+      - name: ⚙️ 生成 .config
+        run: |
+          bash scripts/gen-config.sh "${{ env.BUILD_DIR }}"
+          cd "${{ env.BUILD_DIR }}"
+          make defconfig
+
+      - name: ⬇️ 下载源码包（自动重试）
+        run: |
+          cd "${{ env.BUILD_DIR }}"
+          n=0
+          until [ $n -ge 3 ]; do
+            make download -j${{ env.MAKE_JOBS }} && break
+            n=$((n+1))
+            sleep 30
+          done
+          [ $n -lt 3 ] || { echo "❌ make download 失败"; exit 1; }
+
+      - name: 🏗️ 编译固件
+        run: |
+          cd "${{ env.BUILD_DIR }}"
+          export CCACHE_DIR="${{ env.CCACHE_DIR }}"
+          export PATH="/usr/lib/ccache:$PATH"
+          make -j${{ env.MAKE_JOBS }} || { echo "⚠️ 编译失败，开启 verbose 重试…"; make -j1 V=s; }
+
+      - name: 🐧 提取内核版本
+        id: kernel-version
+        run: |
+          KV=$(grep -oP '^KERNEL_PATCHVER\s*:?=\s*\K.*' \
+            "${{ env.BUILD_DIR }}/include/kernel-version.mk" 2>/dev/null | head -1 || echo "")
+          [ -z "$KV" ] && \
+            KV=$(grep -oP 'CONFIG_LINUX_VERSION_STRING\s*=\s*"\K[^"]*' \
+              "${{ env.BUILD_DIR }}/.config" 2>/dev/null || echo "")
+          echo "kernel_version=${KV:-?}" >> "$GITHUB_OUTPUT"
+
+      - name: 📡 提取 Nikki 版本
+        id: nikki-version
+        run: |
+          for dir in "${{ env.BUILD_DIR }}/bin/packages/x86_64"/*; do
+            APK=$(find "$dir" -name "luci-app-nikki*.apk" 2>/dev/null | head -1)
+            IPK=$(find "$dir" -name "luci-app-nikki_*.ipk" 2>/dev/null | head -1)
+            if [ -n "$APK" ]; then
+              VER=$(basename "$APK" | sed 's/luci-app-nikki-//;s/-r[0-9]*\.apk$//')
+              break
+            elif [ -n "$IPK" ]; then
+              VER=$(basename "$IPK" | sed 's/luci-app-nikki_//;s/_.*//')
+              break
+            fi
+          done
+          echo "nikki_version_actual=${VER:-${{ needs.check-upstream.outputs.nikki_version }}}" >> "$GITHUB_OUTPUT"
+
+      - name: 🧹 清理中间产物
+        run: |
+          rm -rf "${{ env.BUILD_DIR }}/build_dir" || true
+          rm -rf "${{ env.BUILD_DIR }}/staging_dir/target-*" || true
+
+      - name: 🔏 固件签名（minisign）
+        env:
+          MINISIGN_SECRET_KEY: ${{ secrets.MINISIGN_SECRET_KEY }}
+          MINISIGN_KEY_ID: ${{ secrets.MINISIGN_KEY_ID }}
+          MINISIGN_PASSWORD: ${{ secrets.MINISIGN_PASSWORD }}
+        run: |
+          pip install pynacl -q
+          bash scripts/minisign-sign.sh "${{ env.BUILD_DIR }}/bin/targets/x86/64/sha256sums"
+
+      - name: 📋 展示编译产物
+        run: |
+          bash scripts/check-firmware.sh "${{ env.BUILD_DIR }}" || true
+          ls -lh "${{ env.BUILD_DIR }}/bin/targets/x86/64/"*.img.gz 2>/dev/null || true
+
+      - name: 💾 保存版本标识
+        run: |
+          echo "${{ needs.check-upstream.outputs.owrt_version }}_${{ needs.check-upstream.outputs.nikki_version }}_${{ steps.kernel-version.outputs.kernel_version }}" \
+            > "${{ env.LAST_VERSION_FILE }}"
+
+      - name: 📤 上传固件 Artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: my-openwrt-${{ needs.check-upstream.outputs.owrt_ver_safe }}
+          path: |
+            ${{ env.BUILD_DIR }}/bin/targets/x86/64/openwrt-x86-64-generic-squashfs-combined-efi.img.gz
+            ${{ env.BUILD_DIR }}/bin/targets/x86/64/openwrt-x86-64-generic-squashfs-combined.img.gz
+            ${{ env.BUILD_DIR }}/bin/targets/x86/64/openwrt-x86-64-generic-image.iso
+            ${{ env.BUILD_DIR }}/bin/targets/x86/64/sha256sums
+            ${{ env.BUILD_DIR }}/bin/targets/x86/64/sha256sums.minisig
+            ${{ env.BUILD_DIR }}/feeds.conf.default
+            ${{ env.BUILD_DIR }}/bin/targets/x86/64/config.buildinfo
+            ${{ env.BUILD_DIR }}/bin/targets/x86/64/profiles.json
+            ${{ env.BUILD_DIR }}/bin/targets/x86/64/openwrt-x86-64-generic.manifest
+          retention-days: 30
+
+  # ─── Job 3: QEMU 烟雾测试 ────────────────────────────
+  qemu-smoke-test:
+    needs: [check-upstream, build]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: 📥 下载固件 Artifact
+        uses: actions/download-artifact@v7
+        with:
+          name: my-openwrt-${{ needs.check-upstream.outputs.owrt_ver_safe }}
+          path: firmware/
+
+      - name: 📦 安装 QEMU + OVMF
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq qemu-system-x86-64 ovmf
+
+      - name: 🚀 QEMU 烟雾测试
+        run: |
+          set -euo pipefail
+
+          # find 查找固件（勿用 ls glob — 无匹配会 exit 2）
+          FIRMWARE_GZ="$(find firmware/ -name '*-squashfs-combined-efi.img.gz' -type f | head -1)"
+          [ -z "$FIRMWARE_GZ" ] && \
+            FIRMWARE_GZ="$(find firmware/ -name '*-squashfs-combined.img.gz' -type f | head -1)"
+          [ -n "$FIRMWARE_GZ" ] || { echo "❌ 未找到固件"; ls -la firmware/; exit 1; }
+
+          gunzip -k -f "$FIRMWARE_GZ"
+          IMG="${FIRMWARE_GZ%.gz}"
+
+          # 兼容多种 OVMF 路径
+          OVMF_CODE=""
+          for f in /usr/share/OVMF/OVMF_CODE_4M.fd /usr/share/OVMF/OVMF_CODE.fd; do
+            [ -f "$f" ] && OVMF_CODE="$f" && break
+          done
+          [ -n "$OVMF_CODE" ] || { echo "❌ 未找到 OVMF"; exit 1; }
+
+          BOOT_LOG="/tmp/boot.log"
+          OVMF_VARS="/tmp/ovmf_vars.fd"
+          cp "$(dirname "$OVMF_CODE")/OVMF_VARS_4M.fd" "$OVMF_VARS" 2>/dev/null || \
+            cp "$(dirname "$OVMF_CODE")/OVMF_VARS.fd" "$OVMF_VARS" 2>/dev/null || true
+
+          timeout 300 qemu-system-x86_64 \
+            -m 256 -machine q35 -nographic \
+            -serial "file:${BOOT_LOG}" \
+            -drive if=pflash,format=raw,readonly=on,file="$OVMF_CODE" \
+            -drive if=pflash,format=raw,file="$OVMF_VARS" \
+            -drive file="$IMG",format=raw,if=virtio \
+            -netdev user,id=net0,hostfwd=tcp::8080-:80 \
+            -device virtio-net-pci,netdev=net0 \
+            -no-reboot >/dev/null 2>&1 &
+          QEMU_PID=$!
+
+          LUCI_OK=false
+          TIMEOUT=300
+          START_TS=$(date +%s)
+          while [ $(( $(date +%s) - $START_TS )) -lt $TIMEOUT ]; do
+            if grep -qiE '(kernel panic|Oops|BUG:|unable to handle kernel)' "$BOOT_LOG" 2>/dev/null; then
+              echo "❌ 内核异常！"; exit 1
+            fi
+            if curl -sf -o /dev/null http://127.0.0.1:8080/ 2>/dev/null; then
+              echo "✅ LuCI 响应 200"; LUCI_OK=true; break
+            fi
+            sleep 5
+          done
+
+          $LUCI_OK || { echo "❌ 超时"; exit 1; }
+          echo "🎉 QEMU 烟雾测试通过"
+          kill $QEMU_PID 2>/dev/null || true
+          rm -f "$IMG" "$BOOT_LOG"
+
+  # ─── Job 4: 发布 Release ─────────────────────────────
+  release:
+    needs: [check-upstream, build, qemu-smoke-test]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: 📥 下载固件 Artifact
+        uses: actions/download-artifact@v7
+        with:
+          name: my-openwrt-${{ needs.check-upstream.outputs.owrt_ver_safe }}
+          path: release-artifacts/
+
+      - name: 🏷️ 生成 Release body
+        run: |
+          NV="${{ needs.build.outputs.nikki_version_actual }}"
+          KV="${{ needs.build.outputs.kernel_version }}"
+          PW="${{ needs.build.outputs.root_password }}"
+          cat > release-body.md << EOF
+          ## 🏝️ OpenWrt 自动构建
+
+          | 项 | 值 |
+          |----|-----|
+          | OpenWrt 版本 | ${{ needs.check-upstream.outputs.owrt_version }} |
+          | Nikki 版本 | ${NV} |
+          EOF
+          [ -n "$KV" ] && [ "$KV" != "?" ] && \
+            echo "| Linux 内核 | ${KV} |" >> release-body.md
+          cat >> release-body.md << EOF
+          | 架构 | x86/64, EFI, squashfs |
+
+          ### 🔑 登录信息
+          - 用户名: \`root\`
+          - 密码: \`${PW}\`
+          EOF
+
+      - name: 🚀 发布 Release
+        uses: softprops/action-gh-release@v3
+        with:
+          tag_name: my-openwrt-${{ needs.check-upstream.outputs.owrt_ver_safe }}
+          name: 🏝️ OpenWrt ${{ needs.check-upstream.outputs.owrt_ver_safe }}
+          fail_on_unmatched_files: false
+          make_latest: true
+          generate_release_notes: false
+          body_path: release-body.md
+          files: |
+            release-artifacts/bin/targets/x86/64/sha256sums
+            release-artifacts/feeds.conf.default
+            release-artifacts/bin/targets/x86/64/openwrt-x86-64-generic-squashfs-combined-efi.img.gz
+            release-artifacts/bin/targets/x86/64/openwrt-x86-64-generic-squashfs-combined.img.gz
+            release-artifacts/bin/targets/x86/64/openwrt-x86-64-generic-image.iso
+            release-artifacts/bin/targets/x86/64/config.buildinfo
+            release-artifacts/bin/targets/x86/64/profiles.json
+            release-artifacts/bin/targets/x86/64/openwrt-x86-64-generic.manifest
+
+      - name: 📢 Discord 通知
+        if: success()
+        env:
+          DISCORD_TOKEN: ${{ secrets.DISCORD_BOT_TOKEN }}
+          OWRT_VER: ${{ needs.check-upstream.outputs.owrt_version }}
+          NIKKI_VER: ${{ needs.build.outputs.nikki_version_actual }}
+          KERNEL_VER: ${{ needs.build.outputs.kernel_version }}
+          ROOT_PASS: ${{ needs.build.outputs.root_password }}
+          TAG: my-openwrt-${{ needs.check-upstream.outputs.owrt_ver_safe }}
+          RELEASE_URL: https://github.com/${{ github.repository }}/releases/tag/my-openwrt-${{ needs.check-upstream.outputs.owrt_ver_safe }}
+          BUILD_TIME: $(TZ='Asia/Shanghai' date '+%Y-%m-%d %H:%M:%S')
+          CHANNEL_ID: ${{ secrets.DISCORD_CHANNEL_ID }}
+        run: python3 scripts/notify-discord.py

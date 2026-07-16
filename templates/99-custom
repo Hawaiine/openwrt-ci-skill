@@ -1,0 +1,38 @@
+#!/bin/sh
+# ============================================================
+# uci-defaults — 首次启动时执行一次，然后自删
+# 按文件名字母序执行，99-custom 确保最后执行
+# ============================================================
+
+# 创建首次启动标记
+touch /etc/.oasisic-firstboot
+
+# LuCI 语言 + 主题
+uci set luci.main.lang='zh-cn'
+uci set luci.main.mediaurlbase='/luci-static/bootstrap'
+uci commit luci
+
+# 网络：默认 DHCP（旁路网关模式，自动获取 IP）
+uci set network.lan.proto='dhcp'
+
+# 不向下分发 IPv6（让主路由处理）
+uci set network.lan.delegate='0'
+
+# IPv6 DNS
+uci add_list network.lan.dns='2400:3200::1'
+uci add_list network.lan.dns='2402:4e00::6666'
+
+# DHCP：关闭主 DHCP 服务，保留 IPv6 中继
+uci set dhcp.lan.ignore='1'
+uci set dhcp.lan.dhcpv6='hybrid'
+uci set dhcp.lan.ra='hybrid'
+uci set dhcp.lan.ndp='relay'
+
+# 启动 QEMU Guest Agent（PVE 虚拟机用）
+/etc/init.d/qemu-ga enable 2>/dev/null || true
+/etc/init.d/qemu-ga start 2>/dev/null || true
+
+uci commit
+
+# 自清理
+rm /etc/uci-defaults/99-custom

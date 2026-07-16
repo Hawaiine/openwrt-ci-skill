@@ -2,7 +2,7 @@
 
 > OpenWrt 固件构建 CI/CD 最佳实践 —— 从实战中提炼的知识体系
 
-从 [Oasisic OpenWrt](https://github.com/Hawaiine/oasisic-openwrt) 项目（26 commits 重构、4 阶段流水线、全自动发布）中提炼的可复用经验。
+从 [Oasisic OpenWrt](https://github.com/Hawaiine/oasisic-openwrt) 项目（54 commits、4 阶段流水线、全自动发布）中提炼的可复用经验。
 
 ---
 

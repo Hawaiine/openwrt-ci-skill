@@ -1,0 +1,41 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Oasisic OpenWrt — 首次启动</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    background: #f4f6f9; display: flex; align-items: center;
+    justify-content: center; min-height: 100vh;
+  }
+  .container { text-align: center; }
+  .spinner {
+    width: 40px; height: 40px; margin: 0 auto 20px;
+    border: 4px solid #e0e0e0; border-top-color: #3ecf8e;
+    border-radius: 50%; animation: spin 0.8s linear infinite;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  h1 { font-size: 22px; color: #333; font-weight: 600; }
+  p { margin-top: 8px; color: #888; font-size: 14px; }
+</style>
+</head>
+<body>
+<div class="container">
+  <div class="spinner"></div>
+  <h1>正在检测设备状态…</h1>
+  <p>首次启动准备中，请稍候</p>
+</div>
+<script>
+  fetch('/cgi-bin/check-firstboot')
+    .then(function(r) { return r.json(); })
+    .then(function(d) {
+      if (d.firstboot) { window.location.replace('/setup.html'); }
+      else { window.location.replace('/cgi-bin/luci'); }
+    })
+    .catch(function() { window.location.replace('/cgi-bin/luci'); });
+</script>
+</body>
+</html>

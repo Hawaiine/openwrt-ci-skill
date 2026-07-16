@@ -1,7 +1,7 @@
 ---
 name: openwrt-ci-skill
 description: "OpenWrt 固件构建 CI/CD 最佳实践——从实战中提炼的多阶段流水线设计、缓存策略、首次启动状态机、验证纪律与提交规范。适用于任何 OpenWrt 固件编译项目。"
-version: 1.0.0
+version: 1.1.0
 author: Hermes Agent
 platforms: [linux]
 metadata:
@@ -36,9 +36,16 @@ openwrt-firmware/
 │   ├── gen-config.sh            ← 包配置生成器
 │   ├── gen-feeds-conf.sh        ← 动态 feeds 生成器
 │   ├── check-firmware.sh        ← 固件自检
+│   ├── minisign-sign.sh         ← 签名脚本
 │   └── notify-discord.py        ← 通知脚本
 ├── feeds.conf                   ← 依赖源列表
+├── .github/
+│   └── minisign.pub             ← 签名公钥
+├── last_build_version           ← 上次构建版本标识
 └── README.md
+```
+
+> 💡 本 skill 的 `templates/` 目录包含上述所有脚本的可复用模板，详见 [Templates 说明](#十四模板文件)。
 ```
 
 ---
@@ -351,6 +358,9 @@ qemu-smoke-test:
 | Feed 名含连字符 | `scripts/feeds` 报 Syntax error | 用 `[a-zA-Z0-9_]` 命名 |
 | `;` 和 `^` 混用 | 分支锁定失败 | 25.12 用 `;`，Nikki 用 `;main` |
 | APK 用 `tar -xzf` | 只解压控制流，丢数据流 | Python 双 gzip 流提取 |
+| `concurrency` group 同名 | main 和 PR 互相取消 | `${{ github.workflow }}-${{ github.ref }}` 区分 |
+| Runner 磁盘打满 | `No space left on device` | build 前删 dotnet/ghc/boost/android |
+| 缓存 key 跨分支污染 | 不同分支命中同一缓存 | 缓存 key 包含 `github.ref` 或 `github.sha` |
 
 ---
 
@@ -360,3 +370,33 @@ qemu-smoke-test:
 2. **看日志不看经验**：每次失败先看完整日志，不靠记忆推断
 3. **批量扫描再修**：连续失败 2 次以上 → 全面扫描相关环节 → 一次性修复
 4. **验证依赖链**：GitHub Actions 中 `needs` 链缺失是常见故障点
+
+---
+
+## 十三、模板文件（templates/）
+
+本 skill 仓库的 `templates/` 目录包含可直接复用的脚本模板：
+
+| 模板 | 用途 |
+|------|------|
+| `gen-config.sh` | 包配置生成器（x86/64，Nikki，PVE，ucode） |
+| `gen-feeds-conf.sh` | 动态 feeds.conf 生成器（从 tag 推导分支） |
+| `firstboot.sh` | 首次启动状态机共享库 |
+| `99-custom` | uci-defaults 补丁（DHCP + IPv6 中继 + 创建标记） |
+| `index.html` | 入口检测页（首次启动引导） |
+| `cgi-bin/check-firstboot` | 首次启动检测 CGI |
+| `cgi-bin/setup` | 配置写入 CGI（IPv4 校验 + 密码 + 自禁用） |
+| `minisign-sign.sh` | 固件签名脚本 |
+| `notify-discord.py` | Discord Embed 通知脚本 |
+| `main-build.yml` | 完整 CI 流水线（4 站式） |
+| `cleanup.yml` | 定时清理工作流 |
+
+使用方式：
+
+```bash
+# 直接复制到你的项目中
+cp templates/gen-config.sh your-project/scripts/
+cp templates/main-build.yml your-project/.github/workflows/
+# 根据需要修改品牌名、包选择等
+sed -i 's/My OpenWrt/Your Brand/g' your-project/scripts/gen-config.sh
+```

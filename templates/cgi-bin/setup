@@ -1,0 +1,106 @@
+#!/bin/sh
+# Oasisic OpenWrt — 设置向导 CGI 后端
+# 接收 JSON POST → 写 uci 配置 + 设密码 + 清除 .firstboot
+
+echo "Content-Type: application/json"
+echo ""
+
+# 加载首次启动状态机
+. /usr/lib/oasisic/firstboot.sh
+
+# 首次启动校验
+oasisic_require_firstboot_or_exit
+
+# 读取 POST 数据
+INPUT=$(cat)
+if [ -z "$INPUT" ]; then
+    echo '{"success":false,"error":"无输入数据"}'
+    exit 0
+fi
+
+# 解析 JSON 字段（无 jq 时的简陋解析）
+_parse() {
+    echo "$INPUT" | sed 's/.*"'$1'"[[:space:]]*:[[:space:]]*"//;s/".*//'
+}
+
+LAN_IP=$(_parse lanIp)
+PORT=$(_parse port)
+MASK=$(_parse mask)
+GW=$(_parse gw)
+DNS1=$(_parse dns1)
+DNS2=$(_parse dns2)
+PASS=$(_parse password)
+SKIP=$(_parse skip)
+
+# skip 模式：只清标记，不改配置
+if [ "$SKIP" = "true" ]; then
+    oasisic_clear_firstboot "$0"
+    echo '{"success":true,"mode":"skip"}'
+    exit 0
+fi
+
+# 必填字段校验
+for field in lanIp port mask gw; do
+    val=$(eval echo \"\$$field\")
+    if [ -z "$val" ]; then
+        echo "{\"success\":false,\"error\":\"缺少必填字段: $field\"}"
+        exit 0
+    fi
+done
+
+# IPv4 格式校验：x.x.x.x
+_valid_ipv4() {
+    echo "$1" | grep -qE '^([0-9]{1,3}\.){3}[0-9]{1,3}$' || return 1
+    for octet in $(echo "$1" | tr '.' ' '); do
+        [ "$octet" -ge 0 ] && [ "$octet" -le 255 ] || return 1
+    done
+}
+
+_valid_ipv4 "$LAN_IP" || { echo '{"success":false,"error":"IPv4 格式错误: lanIp"}'; exit 0; }
+_valid_ipv4 "$MASK"  || { echo '{"success":false,"error":"IPv4 格式错误: mask"}';  exit 0; }
+_valid_ipv4 "$GW"    || { echo '{"success":false,"error":"IPv4 格式错误: gw"}';    exit 0; }
+
+# 端口范围校验 (1-65535)
+[ "$PORT" -ge 1 ] && [ "$PORT" -le 65535 ] 2>/dev/null || {
+    echo '{"success":false,"error":"端口范围: 1-65535"}'; exit 0;
+}
+
+# ─── 写入 UCI 配置 ─────────────────────────────────
+
+# 1. 网络：设为静态 IP
+uci set network.lan.proto='static'
+uci set network.lan.ipaddr="$LAN_IP"
+uci set network.lan.netmask="$MASK"
+uci set network.lan.gateway="$GW"
+uci del network.lan.dns 2>/dev/null || true
+[ -n "$DNS1" ] && uci add_list network.lan.dns="$DNS1"
+[ -n "$DNS2" ] && uci add_list network.lan.dns="$DNS2"
+
+# 2. Web 管理端口
+uci del uhttpd.main.listen_http 2>/dev/null || true
+uci add_list uhttpd.main.listen_http="0.0.0.0:$PORT"
+uci add_list uhttpd.main.listen_http="[::]:$PORT"
+
+# 3. 品牌域名解析
+uci del dhcp.@dnsmasq[0].address 2>/dev/null || true
+uci add_list dhcp.@dnsmasq[0].address="/oasisic.net/$LAN_IP/"
+
+# 4. DHCP：关闭 IPv4 DHCP，保留 IPv6 中继
+uci set dhcp.lan.ignore='1'
+uci set dhcp.lan.dhcpv4='disabled'
+
+# 5. 设置 root 密码（至少 8 位）
+if [ -n "$PASS" ] && [ ${#PASS} -ge 8 ]; then
+    echo -e "$PASS\n$PASS" | passwd root >/dev/null 2>&1
+fi
+
+uci commit
+
+# 6. 清除首次启动标记 + 自禁用
+oasisic_clear_firstboot "$0"
+
+# 7. 重启服务
+/etc/init.d/network reload
+/etc/init.d/uhttpd restart
+
+echo "{\"success\":true,\"mode\":\"configured\"}"

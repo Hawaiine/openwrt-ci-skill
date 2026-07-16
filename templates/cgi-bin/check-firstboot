@@ -1,0 +1,14 @@
+#!/bin/sh
+# Oasisic OpenWrt — 首次启动检测 CGI
+# 返回: {"firstboot": true/false}
+
+echo "Content-Type: application/json"
+echo ""
+
+. /usr/lib/oasisic/firstboot.sh
+
+if oasisic_is_firstboot; then
+    echo '{"firstboot": true}'
+else
+    echo '{"firstboot": false}'
+fi
