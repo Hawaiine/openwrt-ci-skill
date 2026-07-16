@@ -1,6 +1,6 @@
-# 🏗️ Auto Pipeline Template
+# 🏗️ OpenWrt Build Template
 
-> 通用型 GitHub CI/CD 项目模板 — 自动检测上游 → 编译构建 → 烟雾测试 → 发布 Release
+> OpenWrt 固件构建 CI/CD 模板 — 自动检测上游 → 全量编译 → 烟雾测试 → 发布 Release
 
 [![build](https://github.com/<user>/<repo>/actions/workflows/main-build.yml/badge.svg)](https://github.com/<user>/<repo>/actions/workflows/main-build.yml)
 [![License](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
@@ -74,7 +74,7 @@ check-upstream
 ## 📂 项目结构
 
 ```
-auto-pipeline-template/
+openwrt-build-template/
 │
 ├── .github/workflows/
 │   ├── main-build.yml          ← 4 阶段流水线

@@ -1,6 +1,6 @@
 ---
-name: auto-pipeline-template
-description: "通用型 GitHub CI/CD 项目模板——从零搭建自动化构建/测试/发布流水线。包含多阶段 CI、烟雾测试、产物自检、配置注入、首次启动状态机等完整模式。"
+name: openwrt-build-template
+description: "OpenWrt 固件构建 CI/CD 项目模板——从零搭建自动化编译/测试/发布流水线。包含多阶段 CI、烟雾测试、产物自检、配置注入、首次启动状态机等完整模式。"
 version: 1.0.0
 author: Hermes Agent
 platforms: [linux]
@@ -10,9 +10,9 @@ metadata:
     related_skills: [systematic-debugging, plan, github-actions-workflows, new-project-scaffold]
 ---
 
-# Auto Pipeline Template
+# OpenWrt Build Template
 
-从实战项目中提炼的通用 CI/CD 项目模板。适用于自动编译、工具链构建、固件发布等需要在 GitHub 上搭建完整流水线的场景。
+从 OpenWrt 固件编译项目中提炼的 CI/CD 模板。适用于自动编译、工具链构建、固件发布等需要在 GitHub 上搭建完整流水线的场景。
 
 ---
 
