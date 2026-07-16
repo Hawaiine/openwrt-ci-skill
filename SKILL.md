@@ -1,7 +1,7 @@
 ---
 name: openwrt-ci-skill
 description: "OpenWrt 固件构建 CI/CD 最佳实践——从实战中提炼的多阶段流水线设计、缓存策略、首次启动状态机、验证纪律与提交规范。适用于任何 OpenWrt 固件编译项目。"
-version: 1.1.0
+version: 1.2.0
 author: Hermes Agent
 platforms: [linux]
 metadata:
@@ -25,17 +25,19 @@ openwrt-firmware/
 │   ├── main-build.yml           ← 多阶段流水线
 │   └── cleanup.yml              ← 定时清理
 ├── files/                       ← 注入固件的自定义文件
-│   ├── etc/config/              ← 默认配置（network / firewall / system / dhcp 等）
+│   ├── etc/config/              ← 默认配置（network / firewall / system / dhcp 等，无需完整 drop）
 │   ├── etc/uci-defaults/        ← 首次启动脚本（99-custom）
 │   ├── etc/banner               ← SSH 登录横幅
+│   ├── etc/shadow               ← 随机密码模板
 │   └── www/
 │       ├── index.html           ← 入口检测页
-│       ├── setup.html           ← 设置向导
-│       └── cgi-bin/             ← CGI 后端
+│       ├── setup.html           ← 设置向导（含轮询确认逻辑）
+│       └── cgi-bin/             ← CGI 后端（setup、check-firstboot、setup-rollback）
 ├── scripts/
 │   ├── gen-config.sh            ← 包配置生成器
 │   ├── gen-feeds-conf.sh        ← 动态 feeds 生成器
-│   ├── check-firmware.sh        ← 固件自检
+│   ├── check-firmware.sh        ← 固件自检（含 APK 迁移期检查）
+│   ├── check-docs-consistency.sh ← 文档一致性校验
 │   ├── minisign-sign.sh         ← 签名脚本
 │   └── notify-discord.py        ← 通知脚本
 ├── feeds.conf                   ← 依赖源列表
@@ -114,6 +116,25 @@ until [ $n -ge 3 ]; do
 done
 ```
 
+#### 文档一致性校验
+
+编译阶段增加文档校验步骤，对比 README 中声称的功能包与 `gen-config.sh` 的实际配置：
+
+```bash
+# scripts/check-docs-consistency.sh
+# 校验 README 关键词（如 Nikki、PVE、dnsmasq）对应 CONFIG_PACKAGE_*=y
+# 校验 gen-config.sh 排除的包是否在 README 中说明
+bash scripts/check-docs-consistency.sh
+```
+
+#### 构建产物自检
+
+| 阶段 | 检查项 | 说明 |
+|------|--------|------|
+| build | 包完整性 | luci-base 包存在性、APK 格式一致性、APKINDEX 可解压 |
+| build | 文档一致性 | README 声称 vs gen-config.sh 实际配置 |
+| qemu | LuCI 可达性 | HTTP 200 + JS 资源完整性（非空 + 非 gzip 二进制） |
+
 ---
 
 ## 三、配置管理
@@ -144,14 +165,61 @@ files/
 ```
 
 **关键规则**：
-- 标记文件：`/etc/.oasisic-firstboot`
+- 标记文件：`/etc/.firstboot-marker`
 - CGI 接收 `skip` 参数，支持跳过模式
 - CGI 完成后 `chmod 000` 自禁用
 - 零外部依赖（无 CDN / 外部字体 / 图标库）
 
-### 3.2 配置文件规则
+### 3.2 设置向导健壮性
 
-- **不要 drop 完整配置文件**：`files/etc/config/luci` 等文件会覆盖系统默认，导致 LuCI 403/404
+#### 轮询确认（替代固定延时跳转）
+
+CGI 写入配置后，前端不再使用 `setTimeout(xxxms)` 固定延时跳转，改为轮询新 IP：
+
+```javascript
+// setup.html —— 轮询新地址
+var pollUrl = 'http://' + newIp + ':' + newPort + '/cgi-bin/luci';
+var pollTimer = setInterval(function() {
+  var img = new Image();
+  img.onload = function() {
+    clearInterval(pollTimer);
+    window.location.href = pollUrl;
+  };
+  img.src = pollUrl + '?_t=' + Date.now();
+}, 3000);
+// 60 秒超时 → 显示手动访问链接 + 回滚入口
+```
+
+#### 回滚保护
+
+CGI 修改网络配置前保存原始状态，提供回滚入口：
+
+```bash
+# 保存原始配置
+uci show network.lan > /tmp/.setup-original
+uci show uhttpd.main > /tmp/.setup-original-uhttpd
+
+# 回滚脚本（usr/lib/.../setup-rollback.sh）
+# 读取保存的配置 → uci set → uci commit → network reload
+```
+
+提供 `cgi-bin/setup-rollback` 作为手动回滚入口。
+
+#### 服务重启安全问题
+
+CGI 作为 uhttpd 子进程运行时，直接 `uhttpd restart` 会触发 procd 整组 kill：
+
+```bash
+# ❌ 错误：仍在 uhttpd 进程组内
+/etc/init.d/uhttpd restart &
+
+# ✅ 正确：用 setsid 脱离进程组，sleep 2 给 CGI 留时间写响应
+setsid sh -c 'sleep 2 && /etc/init.d/network reload && /etc/init.d/uhttpd restart' &
+```
+
+### 3.3 配置文件规则
+
+- **不要 drop 完整配置文件**：`files/etc/config/luci` 等文件会覆盖系统默认，导致 LuCI 403/404。官方 `luci-base` 包自带默认配置（含 `resourcebase`、`ubuspath`），覆写特定字段即可
 - 正确做法：用 `uci-defaults` 覆盖特定字段
 - `uci-defaults` 脚本执行后自清理（`rm /etc/uci-defaults/99-custom`）
 
@@ -223,6 +291,8 @@ CONFIG_PACKAGE_luci-lua-runtime=y  # C 模块需要 liblua.so
 Tier 1：APK/IPK 完整性检查（信息级，不阻断）
   - 搜索 luci-base 包
   - 验证 resourcebase / ubuspath
+  - APK 格式一致性检查（纯 .apk / 纯 .ipk，混用警告）
+  - APKINDEX.tar.gz 存在且可解压（仓库数据库完整性）
   - JS 资源缺失标记为 WARN（25.12 可能分散在其他包）
 
 Tier 2：固件 squashfs 提取检查（信息级）
@@ -289,6 +359,18 @@ qemu-smoke-test:
 
         # 轮询 LuCI HTTP 200（300s 超时）
         # 检测 kernel panic / Oops
+
+        # 检查 JS 资源完整性（阻断门）
+        for url in \
+          "http://127.0.0.1:8080/luci-static/resources/luci.js" \
+          "http://127.0.0.1:8080/luci-static/resources/ui.js"; do
+          JS=$(curl -sL "$url")
+          [ ${#JS} -lt 100 ] && { echo "❌ $url 内容过短"; exit 1; }
+
+          # 检查非 gzip 二进制（od 配合 here-string 避免 SIGPIPE）
+          BYTES=$(od -A n -t x1 <<< "${JS:0:20}" | tr -d ' ')
+          echo "$BYTES" | grep -q '^1f8b' && { echo "❌ gzip 二进制"; exit 1; }
+        done
 ```
 
 ---
@@ -361,6 +443,9 @@ qemu-smoke-test:
 | `concurrency` group 同名 | main 和 PR 互相取消 | `${{ github.workflow }}-${{ github.ref }}` 区分 |
 | Runner 磁盘打满 | `No space left on device` | build 前删 dotnet/ghc/boost/android |
 | 缓存 key 跨分支污染 | 不同分支命中同一缓存 | 缓存 key 包含 `github.ref` 或 `github.sha` |
+| `printf \| head` 在 pipefail 下炸 | 大数据量 JS 检查时 `printf: Broken pipe` | 用 `od <<< "\${var:0:20}"` here-string 替代 `printf \| head` |
+| CGI 内重启父进程 uhttpd | procd 整组 kill 时子进程被误杀，响应未写完 | 用 `setsid sh -c 'sleep 2 && /etc/init.d/uhttpd restart' &` 脱离进程组 |
+| `luci-mod-admin-full` 子模块重复声明 | 同时声明 `luci-mod-admin-full` 和 `luci-mod-network/status/system` | `luci-mod-admin-full` 的 DEPENDS 已包含所有子模块，无需重复 |
 
 ---
 
@@ -385,7 +470,10 @@ qemu-smoke-test:
 | `99-custom` | uci-defaults 补丁（DHCP + IPv6 中继 + 创建标记） |
 | `index.html` | 入口检测页（首次启动引导） |
 | `cgi-bin/check-firstboot` | 首次启动检测 CGI |
-| `cgi-bin/setup` | 配置写入 CGI（IPv4 校验 + 密码 + 自禁用） |
+| `cgi-bin/setup` | 配置写入 CGI（IPv4 校验 + 密码 + 自禁用 + 回滚保护） |
+| `cgi-bin/setup-rollback` | 手动回滚 CGI |
+| `setup-rollback.sh` | 回滚脚本（从 /tmp/.setup-original 恢复） |
+| `check-docs-consistency.sh` | 文档一致性校验（README vs gen-config.sh） |
 | `minisign-sign.sh` | 固件签名脚本 |
 | `notify-discord.py` | Discord Embed 通知脚本 |
 | `main-build.yml` | 完整 CI 流水线（4 站式） |
