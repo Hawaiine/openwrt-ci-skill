@@ -18,19 +18,20 @@ if [ -z "$INPUT" ]; then
     exit 0
 fi
 
-# 解析 JSON 字段（无 jq 时的简陋解析）
-_parse() {
-    echo "$INPUT" | sed 's/.*"'$1'"[[:space:]]*:[[:space:]]*"//;s/".*//'
+# 解析 JSON 字段（使用 OpenWrt 内置 jshn，来自 libubox）
+. /usr/share/libubox/jshn.sh
+json_load "$INPUT" || {
+    echo '{"success":false,"error":"JSON 解析失败"}'
+    exit 0
 }
-
-LAN_IP=$(_parse lanIp)
-PORT=$(_parse port)
-MASK=$(_parse mask)
-GW=$(_parse gw)
-DNS1=$(_parse dns1)
-DNS2=$(_parse dns2)
-PASS=$(_parse password)
-SKIP=$(_parse skip)
+json_get_var LAN_IP lanIp
+json_get_var PORT port
+json_get_var MASK mask
+json_get_var GW gw
+json_get_var DNS1 dns1
+json_get_var DNS2 dns2
+json_get_var PASS password
+json_get_var SKIP skip
 
 # skip 模式：只清标记，不改配置
 if [ "$SKIP" = "true" ]; then
