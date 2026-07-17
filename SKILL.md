@@ -229,11 +229,12 @@ setsid sh -c 'sleep 2 && /etc/init.d/network reload && /etc/init.d/uhttpd restar
 
 ### 3.3 配置文件规则
 
-- **不要 drop 完整配置文件**：`files/etc/config/luci` 等文件会覆盖系统默认，导致 LuCI 403/404。官方 `luci-base` 包自带默认配置（含 `resourcebase`、`ubuspath`），覆写特定字段即可
-- 正确做法：用 `uci-defaults` 覆盖特定字段
+- **不要 drop 完整配置文件**：`files/etc/config/luci` 等文件会覆盖系统默认，导致 LuCI 403/404
+- **`resourcebase` 必须显式设置**：LuCI 登录页实际读取的是 `core 'main'` 段下的 `resourcebase`，而 `/etc/config/luci` 默认只有 `internal 'internals'` 段下的同名配置，两者不是一回事。缺少此字段 → `"resourcebase":null` → JS 资源请求到错误根路径 → 404 + "正在载入视图"卡死。
+- 正确做法：用 `uci-defaults` 覆盖特定字段（`resourcebase`, `lang`, `mediaurlbase` 等）
 - `uci-defaults` 脚本执行后自清理（`rm /etc/uci-defaults/99-custom`）
 
-### 3.3 常见配置陷阱
+### 3.4 常见配置陷阱
 
 | 陷阱 | 说明 |
 |------|------|
@@ -445,6 +446,7 @@ qemu-smoke-test:
 | `set -e` + `ls glob` | 无匹配时 exit 2 | 用 `find` 替代 |
 | `make -j$(nproc)` | 超出 runner 核心 | 硬编码 `MAKE_JOBS: 4` |
 | 缺少 `ucode` 包 | LuCI 无限转圈 | `CONFIG_PACKAGE_ucode=y` |
+| `resourcebase` 未设置 | `"resourcebase":null` → JS(404) → 页面卡死"正在载入视图" | 99-custom 中加 `uci set luci.main.resourcebase='/luci-static/resources'` |
 | Banner 硬编码 IP | DHCP 模式下 IP 由主路由分配 | 用官方 logo + `%V` `%H` |
 | 标记文件忘清 | 每次启动进向导 | CGI 完成后清标记 + chmod 000 |
 | Feed 名含连字符 | `scripts/feeds` 报 Syntax error | 用 `[a-zA-Z0-9_]` 命名 |
@@ -479,10 +481,10 @@ qemu-smoke-test:
 | `gen-config.sh` | 包配置生成器（x86/64，Nikki，PVE，ucode） |
 | `gen-feeds-conf.sh` | 动态 feeds.conf 生成器（从 tag 推导分支） |
 | `firstboot.sh` | 首次启动状态机共享库 |
-| `99-custom` | uci-defaults 补丁（DHCP + IPv6 中继 + 创建标记） |
+| `99-custom` | uci-defaults 补丁（resourcebase/DHCP/IPv6 禁用 + 创建标记） |
 | `index.html` | 入口检测页（首次启动引导） |
 | `cgi-bin/check-firstboot` | 首次启动检测 CGI |
-| `cgi-bin/setup` | 配置写入 CGI（jshn 解析 JSON + IPv4 校验 + 密码 + 自禁用 + 回滚保护） |
+| `cgi-bin/setup` | 配置写入 CGI（jshn 解析 JSON + IPv4 校验 + 密码 + 自禁用 + 回滚保护，无品牌域名写死） |
 | `cgi-bin/setup-rollback` | 手动回滚 CGI |
 | `setup-rollback.sh` | 回滚脚本（从 /tmp/.setup-original 恢复） |
 | `check-docs-consistency.sh` | 文档一致性校验（README vs gen-config.sh） |

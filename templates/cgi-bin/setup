@@ -82,11 +82,7 @@ uci del uhttpd.main.listen_http 2>/dev/null || true
 uci add_list uhttpd.main.listen_http="0.0.0.0:$PORT"
 uci add_list uhttpd.main.listen_http="[::]:$PORT"
 
-# 3. 品牌域名解析
-uci del dhcp.@dnsmasq[0].address 2>/dev/null || true
-uci add_list dhcp.@dnsmasq[0].address="/oasisic.net/$LAN_IP/"
-
-# 4. DHCP：关闭 IPv4 DHCP，保留 IPv6 中继
+# 4. DHCP：关闭 IPv4 DHCP，IPv6 中继默认关闭
 uci set dhcp.lan.ignore='1'
 uci set dhcp.lan.dhcpv4='disabled'
 

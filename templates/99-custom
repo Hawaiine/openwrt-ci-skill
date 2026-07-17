@@ -7,9 +7,10 @@
 # 创建首次启动标记
 touch /etc/.oasisic-firstboot
 
-# LuCI 语言 + 主题
+# LuCI 语言 + 主题 + 资源路径
 uci set luci.main.lang='zh-cn'
 uci set luci.main.mediaurlbase='/luci-static/bootstrap'
+uci set luci.main.resourcebase='/luci-static/resources'
 uci commit luci
 
 # 网络：默认 DHCP（旁路网关模式，自动获取 IP）
@@ -22,11 +23,12 @@ uci set network.lan.delegate='0'
 uci add_list network.lan.dns='2400:3200::1'
 uci add_list network.lan.dns='2402:4e00::6666'
 
-# DHCP：关闭主 DHCP 服务，保留 IPv6 中继
+# DHCP：关闭主 DHCP 服务，IPv6 中继默认关闭
 uci set dhcp.lan.ignore='1'
-uci set dhcp.lan.dhcpv6='hybrid'
-uci set dhcp.lan.ra='hybrid'
-uci set dhcp.lan.ndp='relay'
+uci set dhcp.lan.dynamicdhcp='0'
+uci set dhcp.lan.dhcpv6='disabled'
+uci set dhcp.lan.ra='disabled'
+uci set dhcp.lan.ndp='disabled'
 
 # 启动 QEMU Guest Agent（PVE 虚拟机用）
 /etc/init.d/qemu-ga enable 2>/dev/null || true
