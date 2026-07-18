@@ -289,7 +289,7 @@ CONFIG_PACKAGE_luci-lua-runtime=y  # C 模块需要 liblua.so
 
 ### 5.3 版本提取
 
-- **内核版本**：从 `include/kernel-version.mk` 提取 `KERNEL_PATCHVER`
+- **内核版本**：从 `include/kernel-version.mk` 提取 `KERNEL_PATCHVER`，再从 `target/linux/generic/kernel-{PATCHVER}` 提取 `LINUX_VERSION` 后缀，拼接为完整版本（如 `6.12.94`）
 - **Nikki 版本**：从 `luci-app-nikki` 包文件名提取（APK 或 IPK）
 
 ---
