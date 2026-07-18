@@ -27,7 +27,7 @@ openwrt-firmware/
 ├── files/                       ← 注入固件的自定义文件
 │   ├── etc/config/              ← 默认配置（network / firewall / system / dhcp 等，无需完整 drop）
 │   ├── etc/uci-defaults/        ← 首次启动脚本（99-custom）
-│   ├── etc/banner               ← SSH 登录横幅
+│   ├── etc/banner               ← 可选自定义（无此文件则用 base-files 官方默认）
 │   ├── etc/shadow               ← 随机密码模板
 │   └── www/
 │       ├── index.html           ← 入口检测页
@@ -447,11 +447,11 @@ qemu-smoke-test:
 | `make -j$(nproc)` | 超出 runner 核心 | 硬编码 `MAKE_JOBS: 4` |
 | 缺少 `ucode` 包 | LuCI 无限转圈 | `CONFIG_PACKAGE_ucode=y` |
 | `resourcebase` 未设置 | `"resourcebase":null` → JS(404) → 页面卡死"正在载入视图" | 99-custom 中加 `uci set luci.main.resourcebase='/luci-static/resources'` |
-| Banner 硬编码 IP | DHCP 模式下 IP 由主路由分配 | 用官方 logo + `%V` `%H` |
+|| Banner 硬编码 IP | DHCP 模式下 IP 由主路由分配 | 删除 banner 文件，使用 base-files 官方默认（`%D %V, %C ${codename}`） |
 | 标记文件忘清 | 每次启动进向导 | CGI 完成后清标记 + chmod 000 |
 | Feed 名含连字符 | `scripts/feeds` 报 Syntax error | 用 `[a-zA-Z0-9_]` 命名 |
 | `;` 和 `^` 混用 | 分支锁定失败 | 25.12 用 `;`，Nikki 用 `;main` |
-| APK 用 `tar -xzf` | 只解压控制流，丢数据流 | Python 双 gzip 流提取 |
+|| NTP `use_dhcp` 默认启用 | `portmap` NTP 配置未设定时 LuCI 默认勾选"使用 DHCP 通告的服务器" | 显式加 `option use_dhcp '0'` 到 `config timeserver 'ntp'`，关闭 DHCP 通告 |
 | `concurrency` group 同名 | main 和 PR 互相取消 | `${{ github.workflow }}-${{ github.ref }}` 区分 |
 | Runner 磁盘打满 | `No space left on device` | build 前删 dotnet/ghc/boost/android |
 | 缓存 key 跨分支污染 | 不同分支命中同一缓存 | 缓存 key 包含 `github.ref` 或 `github.sha` |
@@ -460,7 +460,7 @@ qemu-smoke-test:
 || `luci-mod-admin-full` 子模块重复声明 | 同时声明 `luci-mod-admin-full` 和 `luci-mod-network/status/system` | `luci-mod-admin-full` 的 DEPENDS 已包含所有子模块，无需重复 |
 || `luci-light` 与 `luci` 同时选择 | 两个 meta 包功能重叠但依赖树不同，全量编译时可能导致 `cbi.js`/`luci.js` 缺失 | 只保留 `CONFIG_PACKAGE_luci=y`，删除 `luci-light` |
 || `show_menu` 非官方选项 | `uci set luci.title.show_menu='0'` 写入但无任何代码读取此值，是不可见的僵尸选项 | 直接删除，不影响 LuCI 菜单显隐 |
-|| CGI 内 `passwd` 无 tty 静默失败 | 设置向导/SSH/LuCI 密码全不生效 | 用 `openssl passwd -6` 生成 SHA-512 hash，`sed -i` 直接写 `/etc/shadow` |
+|| CGI 内 `passwd` 可用 | uhttpd 环境下 `printf | passwd` 能正常执行（实测通过） | `passwd` 在 uhttpd 子进程中有 stdin 管道，无需 tty |
 || shadow 文件含 `#` 注释行 | `passwd` 报 `no record of root`，密码写入 `/etc/passwd` | shadow 文件禁止任何 `#` 注释行，CI 中 `sed -i '/^#/d'` 防御性清理 |
 || CI 密码写入后无校验 | 密码写失败但构建成功，Release 无有效密码 | 写入后 `grep -q "^root:"` 校验，失败 `exit 1` |
 
