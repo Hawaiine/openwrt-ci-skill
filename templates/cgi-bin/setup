@@ -82,13 +82,23 @@ uci del uhttpd.main.listen_http 2>/dev/null || true
 uci add_list uhttpd.main.listen_http="0.0.0.0:$PORT"
 uci add_list uhttpd.main.listen_http="[::]:$PORT"
 
-# 4. DHCP：关闭 IPv4 DHCP，IPv6 中继默认关闭
+# 3. DHCP：关闭 IPv4 DHCP，IPv6 中继默认关闭
 uci set dhcp.lan.ignore='1'
 uci set dhcp.lan.dhcpv4='disabled'
 
-# 5. 设置 root 密码（至少 8 位）
+# 5. 设置 root 密码（CGI 环境无 /dev/tty，用 openssl -6 直接写 shadow）
+# ⚠️ CGI 中 busybox passwd 没有 /dev/tty 会静默失败
 if [ -n "$PASS" ] && [ ${#PASS} -ge 8 ]; then
-    echo -e "$PASS\n$PASS" | passwd root >/dev/null 2>&1
+    HASH=$(openssl passwd -6 "$PASS" 2>/dev/null)
+    if [ -z "$HASH" ] && busybox cryptpw --help 2>/dev/null | grep -q sha512; then
+        HASH=$(busybox cryptpw -a sha512 "$PASS" 2>/dev/null)
+    fi
+    if [ -n "$HASH" ] && echo "$HASH" | grep -q '^\$6\$'; then
+        sed -i "s|^root:[^:]*:|root:${HASH}:|" /etc/shadow
+        if ! grep -q "^root:${HASH}:" /etc/shadow 2>/dev/null; then
+            echo "警告：密码写入 shadow 后校验不一致" >&2
+        fi
+    fi
 fi
 
 uci commit
@@ -96,8 +106,7 @@ uci commit
 # 6. 清除首次启动标记 + 自禁用
 oasisic_clear_firstboot "$0"
 
-# 7. 重启服务
-/etc/init.d/network reload
-/etc/init.d/uhttpd restart
+# 7. 重启服务（用 setsid 脱离 uhttpd 进程组）
+setsid sh -c 'sleep 2 && /etc/init.d/network reload && /etc/init.d/uhttpd restart' 2>/dev/null &
 
-echo "{\"success\":true,\"mode\":\"configured\"}"
+echo '{"success":true,"mode":"configured"}'

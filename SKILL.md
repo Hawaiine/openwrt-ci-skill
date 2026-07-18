@@ -460,6 +460,9 @@ qemu-smoke-test:
 || `luci-mod-admin-full` 子模块重复声明 | 同时声明 `luci-mod-admin-full` 和 `luci-mod-network/status/system` | `luci-mod-admin-full` 的 DEPENDS 已包含所有子模块，无需重复 |
 || `luci-light` 与 `luci` 同时选择 | 两个 meta 包功能重叠但依赖树不同，全量编译时可能导致 `cbi.js`/`luci.js` 缺失 | 只保留 `CONFIG_PACKAGE_luci=y`，删除 `luci-light` |
 || `show_menu` 非官方选项 | `uci set luci.title.show_menu='0'` 写入但无任何代码读取此值，是不可见的僵尸选项 | 直接删除，不影响 LuCI 菜单显隐 |
+|| CGI 内 `passwd` 无 tty 静默失败 | 设置向导/SSH/LuCI 密码全不生效 | 用 `openssl passwd -6` 生成 SHA-512 hash，`sed -i` 直接写 `/etc/shadow` |
+|| shadow 文件含 `#` 注释行 | `passwd` 报 `no record of root`，密码写入 `/etc/passwd` | shadow 文件禁止任何 `#` 注释行，CI 中 `sed -i '/^#/d'` 防御性清理 |
+|| CI 密码写入后无校验 | 密码写失败但构建成功，Release 无有效密码 | 写入后 `grep -q "^root:"` 校验，失败 `exit 1` |
 
 ---
 
@@ -484,7 +487,7 @@ qemu-smoke-test:
 | `99-custom` | uci-defaults 补丁（resourcebase/DHCP/IPv6 禁用 + 创建标记） |
 | `index.html` | 入口检测页（首次启动引导） |
 | `cgi-bin/check-firstboot` | 首次启动检测 CGI |
-| `cgi-bin/setup` | 配置写入 CGI（jshn 解析 JSON + IPv4 校验 + 密码 + 自禁用 + 回滚保护，无品牌域名写死） |
+| `cgi-bin/setup` | 配置写入 CGI（jshn + openssl SHA-512 直接写 shadow，setsid 重启） |
 | `cgi-bin/setup-rollback` | 手动回滚 CGI |
 | `setup-rollback.sh` | 回滚脚本（从 /tmp/.setup-original 恢复） |
 | `check-docs-consistency.sh` | 文档一致性校验（README vs gen-config.sh） |
