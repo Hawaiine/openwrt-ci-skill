@@ -143,10 +143,14 @@ jobs:
         id: gen-pass
         run: |
           mkdir -p files/etc
+          # ⚠️ 清理注释行 — busybox 解析器不识别 # 注释
+          sed -i '/^#/d' files/etc/shadow 2>/dev/null || true
           PASSWORD=$(openssl rand -base64 12 | tr -d '=' | tr '/+' 'x9' | head -c 16)
           HASH=$(openssl passwd -6 "$PASSWORD")
           sed -i "s|^root:[^:]*:|root:${HASH}:|" files/etc/shadow 2>/dev/null || \
-            echo "root:${HASH}:0:0:root:/root:/bin/ash" > files/etc/shadow
+            echo "root:${HASH}:19058:0:99999:7:::" > files/etc/shadow
+          # 校验密码写入成功
+          grep -q "^root:" files/etc/shadow || { echo "❌ 密码写入失败"; exit 1; }
           echo "root_password=${PASSWORD}" >> "$GITHUB_OUTPUT"
 
       - name: ⚙️ 复制自定义文件
@@ -200,11 +204,17 @@ jobs:
       - name: 🐧 提取内核版本
         id: kernel-version
         run: |
-          KV=$(grep -oP '^KERNEL_PATCHVER\s*:?=\s*\K.*' \
+          PATCHVER=$(grep -oP '^KERNEL_PATCHVER\s*:?=\s*\K.*' \
             "${{ env.BUILD_DIR }}/include/kernel-version.mk" 2>/dev/null | head -1 || echo "")
-          [ -z "$KV" ] && \
+          if [ -n "$PATCHVER" ]; then
+            # 拼接 LINUX_VERSION 后缀（如 6.12 + .94 = 6.12.94）
+            SUFFIX=$(grep -oP "^LINUX_VERSION-${PATCHVER}\s*=\s*\K.*" \
+              "${{ env.BUILD_DIR }}/target/linux/generic/kernel-${PATCHVER}" 2>/dev/null || echo "")
+            KV="${PATCHVER}${SUFFIX}"
+          else
             KV=$(grep -oP 'CONFIG_LINUX_VERSION_STRING\s*=\s*"\K[^"]*' \
-              "${{ env.BUILD_DIR }}/.config" 2>/dev/null || echo "")
+              "${{ env.BUILD_DIR }}/.config" 2>/dev/null || echo "?")
+          fi
           echo "kernel_version=${KV:-?}" >> "$GITHUB_OUTPUT"
 
       - name: 📡 提取 Nikki 版本

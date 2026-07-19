@@ -1,7 +1,7 @@
 ---
 name: openwrt-ci-skill
 description: "OpenWrt 固件构建 CI/CD 最佳实践——从实战中提炼的多阶段流水线设计、缓存策略、首次启动状态机、验证纪律与提交规范。适用于任何 OpenWrt 固件编译项目。"
-version: 1.2.0
+version: 1.3.0
 author: Hermes Agent
 platforms: [linux]
 metadata:
@@ -12,7 +12,7 @@ metadata:
 
 # OpenWrt CI Skill
 
-从 [Oasisic OpenWrt](https://github.com/Hawaiine/oasisic-openwrt) 实战项目中提炼的 CI/CD 最佳实践。覆盖了从 Git 提交规范到多阶段流水线、从首次启动状态机到排错原则的完整知识体系。
+从 [Oasisic OpenWrt](https://github.com/Hawaiine/oasisic-openwrt) 实战项目（94 次构建、4 阶段流水线、全自动发布）中提炼的 CI/CD 最佳实践。覆盖了从 Git 提交规范到多阶段流水线、从首次启动状态机到排错原则的完整知识体系。
 
 ---
 
@@ -475,7 +475,24 @@ qemu-smoke-test:
 
 ---
 
-## 十三、模板文件（templates/）
+## 十四、参考项目状态
+
+### Oasisic OpenWrt — 最新发布
+
+| 版本 | 日期 | 说明 |
+|------|------|------|
+| [oasisic-25.12.5](https://github.com/Hawaiine/oasisic-openwrt/releases/tag/oasisic-25.12.5) | 2026-07-19 | 自动构建 #94 — OpenWrt 25.12.5 + Nikki 1.26.1 + Kernel 6.12.94 |
+| [v1.0.0](https://github.com/Hawaiine/oasisic-openwrt/releases/tag/v1.0.0) | 2026-07-18 | 里程碑发布 — 四阶段全部完成 |
+
+### 构建参数
+
+- 全量 SDK 编译，x86/64，EFI + squashfs
+- 三层缓存（ccache + 源码树 + dl 包）
+- 随机密码 SHA-512，minisign 签名
+- QEMU 烟雾测试 + LuCI JS 完整性检查
+- 首次启动设置向导（零外部依赖）
+
+## 十五、模板文件（templates/）
 
 本 skill 仓库的 `templates/` 目录包含可直接复用的脚本模板：
 
