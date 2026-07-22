@@ -234,6 +234,37 @@ setsid sh -c 'sleep 2 && /etc/init.d/network reload && /etc/init.d/uhttpd restar
 - 正确做法：用 `uci-defaults` 覆盖特定字段（`resourcebase`, `lang`, `mediaurlbase` 等）
 - `uci-defaults` 脚本执行后自清理（`rm /etc/uci-defaults/99-custom`）
 
+### 3.4 ⚠️ LuCI 语言注册关键陷阱（OpenWrt 25.12+）
+
+#### 问题
+LuCI 中文语言在全新固件上不生效——语言下拉框为空，界面回退英文。
+
+#### 根因
+1. **openwrt#16987**：apk 包自带的 uci-defaults 脚本（`luci-i18n-base-zh-cn`）在 QEMU 环境中不执行，导致 `luci.languages` section 完全为空。
+2. **`luci.languages` section 不存在**：全新固件上 `luci` 配置中没有 `languages` section，必须先创建。
+3. **Key 格式**：必须用 `zh_cn`（下划线），因为 `luci.mk` 的 `LuciTranslation` 宏通过 `$(subst -,\_,zh-cn)` 生成的就是 `zh_cn`（下划线）。LuCI dispatcher 把 `_` 替换成 `-` 再去匹配翻译文件 `base.zh-cn.lmo`。
+
+#### 正确做法
+
+```sh
+# 99-custom 中必须包含：
+uci set luci.languages='internal'                          # 先创建 section
+uci set luci.languages.zh_cn='简体中文 (Simplified Chinese)'  # 注册语言（下划线！）
+uci set luci.main.lang='zh_cn'                              # 设置默认语言（下划线！）
+```
+
+#### 网络诊断默认地址（DNSPod）
+
+```sh
+uci set luci.diag.dns='119.29.29.29'
+uci set luci.diag.ping='119.29.29.29'
+uci set luci.diag.route='119.29.29.29'
+```
+
+#### 验证方法
+- 编译后：`check-firmware.sh` 应 grep 确认 99-custom 包含 `luci.diag.dns='119.29.29.29'` 等字段
+- 运行时：`ubus call uci get '{"config":"luci","section":"languages"}'` 应返回 `zh_cn` 选项
+
 ### 3.4 常见配置陷阱
 
 | 陷阱 | 说明 |
@@ -481,7 +512,6 @@ qemu-smoke-test:
 
 | 版本 | 日期 | 说明 |
 |------|------|------|
-| [oasisic-25.12.5](https://github.com/Hawaiine/oasisic-openwrt/releases/tag/oasisic-25.12.5) | 2026-07-19 | 自动构建 #94 — OpenWrt 25.12.5 + Nikki 1.26.1 + Kernel 6.12.94 |
 | [v1.0.0](https://github.com/Hawaiine/oasisic-openwrt/releases/tag/v1.0.0) | 2026-07-18 | 里程碑发布 — 四阶段全部完成 |
 
 ### 构建参数
@@ -501,7 +531,7 @@ qemu-smoke-test:
 | `gen-config.sh` | 包配置生成器（x86/64，Nikki，PVE，ucode） |
 | `gen-feeds-conf.sh` | 动态 feeds.conf 生成器（从 tag 推导分支） |
 | `firstboot.sh` | 首次启动状态机共享库 |
-| `99-custom` | uci-defaults 补丁（resourcebase/DHCP/IPv6 禁用 + 创建标记） |
+| `99-custom` | uci-defaults 补丁（语言注册/DNSPod 诊断/resourcebase/DHCP/IPv6 禁用 + 创建标记） |
 | `index.html` | 入口检测页（首次启动引导） |
 | `cgi-bin/check-firstboot` | 首次启动检测 CGI |
 | `cgi-bin/setup` | 配置写入 CGI（jshn + openssl SHA-512 直接写 shadow，setsid 重启） |

@@ -8,9 +8,19 @@
 touch /etc/.oasisic-firstboot
 
 # LuCI 语言 + 主题 + 资源路径
-uci set luci.main.lang='zh-cn'
+# ⚠️ 关键：luci.languages section 在全新固件上不存在，必须手动创建
+#   用 zh_cn（下划线），因为 luci.mk 生成的是 zh_cn
+#   不能指望 apk 包自带的 uci-defaults 注册脚本（命中 openwrt#16987）
+uci set luci.languages='internal'
+uci set luci.languages.zh_cn='简体中文 (Simplified Chinese)'
+uci set luci.main.lang='zh_cn'
 uci set luci.main.mediaurlbase='/luci-static/bootstrap'
 uci set luci.main.resourcebase='/luci-static/resources'
+
+# 网络诊断默认地址（DNSPod，国内解析快、稳定）
+uci set luci.diag.dns='119.29.29.29'
+uci set luci.diag.ping='119.29.29.29'
+uci set luci.diag.route='119.29.29.29'
 uci commit luci
 
 # 网络：默认 DHCP（旁路网关模式，自动获取 IP）
