@@ -1,7 +1,7 @@
 ---
 name: openwrt-ci-skill
 description: "OpenWrt 固件构建 CI/CD 最佳实践——从实战中提炼的多阶段流水线设计、缓存策略、首次启动状态机、验证纪律与提交规范。适用于任何 OpenWrt 固件编译项目。"
-version: 1.3.0
+version: 1.4.0
 author: Hermes Agent
 platforms: [linux]
 metadata:
@@ -12,7 +12,7 @@ metadata:
 
 # OpenWrt CI Skill
 
-从 [Oasisic OpenWrt](https://github.com/Hawaiine/oasisic-openwrt) 实战项目（94 次构建、4 阶段流水线、全自动发布）中提炼的 CI/CD 最佳实践。覆盖了从 Git 提交规范到多阶段流水线、从首次启动状态机到排错原则的完整知识体系。
+从 [Oasisic OpenWrt](https://github.com/Hawaiine/oasisic-openwrt) 实战项目（95 次构建、4 阶段流水线、全自动发布）中提炼的 CI/CD 最佳实践。覆盖了从 Git 提交规范到多阶段流水线、从首次启动状态机到排错原则的完整知识体系。
 
 ---
 
@@ -265,7 +265,7 @@ uci set luci.diag.route='119.29.29.29'
 - 编译后：`check-firmware.sh` 应 grep 确认 99-custom 包含 `luci.diag.dns='119.29.29.29'` 等字段
 - 运行时：`ubus call uci get '{"config":"luci","section":"languages"}'` 应返回 `zh_cn` 选项
 
-### 3.4 常见配置陷阱
+### 3.5 常见配置陷阱
 
 | 陷阱 | 说明 |
 |------|------|
@@ -491,6 +491,10 @@ qemu-smoke-test:
 || `luci-mod-admin-full` 子模块重复声明 | 同时声明 `luci-mod-admin-full` 和 `luci-mod-network/status/system` | `luci-mod-admin-full` 的 DEPENDS 已包含所有子模块，无需重复 |
 || `luci-light` 与 `luci` 同时选择 | 两个 meta 包功能重叠但依赖树不同，全量编译时可能导致 `cbi.js`/`luci.js` 缺失 | 只保留 `CONFIG_PACKAGE_luci=y`，删除 `luci-light` |
 || `show_menu` 非官方选项 | `uci set luci.title.show_menu='0'` 写入但无任何代码读取此值，是不可见的僵尸选项 | 直接删除，不影响 LuCI 菜单显隐 |
+| `luci.title.title` 无效定制 | `uci set luci.title.title='...'` 写入但无任何代码读取（openwrt/luci 全量源码验证） | 直接删除，不影响 LuCI 标题栏 |
+| LuCI 语言下拉框为空 | 全新固件 `luci.languages` 段不存在，apk 包 uci-defaults 因 openwrt#16987 不执行 | 99-custom 中手动创建 `uci set luci.languages='internal'` + `uci set luci.languages.zh_cn='简体中文'` |
+| 语言 Key 格式错误 | 用 `zh-cn`（连字符）而非 `zh_cn`（下划线） | `luci.mk` 生成的是 `zh_cn`，必须用下划线 |
+| 网络诊断默认地址不可达 | 默认 Google DNS 在国内被墙或延迟高 | 99-custom 中设为 `119.29.29.29`（DNSPod）或 `223.5.5.5`（阿里云） |
 || CGI 内 `passwd` 可用 | uhttpd 环境下 `printf | passwd` 能正常执行（实测通过） | `passwd` 在 uhttpd 子进程中有 stdin 管道，无需 tty |
 || shadow 文件含 `#` 注释行 | `passwd` 报 `no record of root`，密码写入 `/etc/passwd` | shadow 文件禁止任何 `#` 注释行，CI 中 `sed -i '/^#/d'` 防御性清理 |
 || CI 密码写入后无校验 | 密码写失败但构建成功，Release 无有效密码 | 写入后 `grep -q "^root:"` 校验，失败 `exit 1` |
@@ -512,6 +516,7 @@ qemu-smoke-test:
 
 | 版本 | 日期 | 说明 |
 |------|------|------|
+| [oasisic-25.12.5](https://github.com/Hawaiine/oasisic-openwrt/releases/tag/oasisic-25.12.5) | 2026-07-22 | 自动构建 #95 — 语言修复 ✅ / DNSPod 诊断 / 全量 SDK 25.12.5 |
 | [v1.0.0](https://github.com/Hawaiine/oasisic-openwrt/releases/tag/v1.0.0) | 2026-07-18 | 里程碑发布 — 四阶段全部完成 |
 
 ### 构建参数
@@ -521,6 +526,9 @@ qemu-smoke-test:
 - 随机密码 SHA-512，minisign 签名
 - QEMU 烟雾测试 + LuCI JS 完整性检查
 - 首次启动设置向导（零外部依赖）
+- 中文语言自动注册（`zh_cn` 下划线 + `luci.languages` 手动创建，解决 openwrt#16987）
+- 网络诊断默认 DNSPod `119.29.29.29`
+- 固件自检含 99-custom 内容校验（正向 + 负向）
 
 ## 十五、模板文件（templates/）
 
